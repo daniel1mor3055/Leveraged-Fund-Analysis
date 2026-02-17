@@ -2,10 +2,16 @@
 Process raw price data into clean analysis-ready format.
 
 Calculates:
-- Daily returns
+- Daily returns (both price-return and total-return tracks)
 - Cumulative returns
 - Realized variance
 - Validates data quality
+
+Dual-Track Processing:
+- Price Return: Based on unadjusted Close prices. Use for LETF modeling
+  since leveraged ETFs target daily index PRICE performance (not total return).
+- Total Return: Based on Adj Close (dividend-adjusted). Use for investor
+  analysis showing actual returns including distributions.
 """
 
 import pandas as pd
@@ -27,16 +33,21 @@ class DataProcessor:
         self.processed_dir.mkdir(parents=True, exist_ok=True)
         logger.info(f"Processing: {self.raw_dir} -> {self.processed_dir}")
     
-    def process_ticker(self, ticker: str, use_adjusted: bool = True) -> pd.DataFrame:
+    def process_ticker(self, ticker: str, default_to_price_return: bool = True) -> pd.DataFrame:
         """
-        Process a single ticker's raw data.
+        Process a single ticker's raw data with dual-track returns.
+        
+        Provides both price-return and total-return tracks:
+        - Price Return: Use for LETF modeling (matches daily index objective)
+        - Total Return: Use for investor analysis (includes dividends)
         
         Args:
             ticker: Ticker symbol (without ^)
-            use_adjusted: If True, use Adj Close (includes dividends); if False, use Close
+            default_to_price_return: If True, default 'Daily_Return' uses price return
+                                     (correct for LETF modeling). If False, uses total return.
             
         Returns:
-            Processed DataFrame with daily returns and metrics
+            Processed DataFrame with dual-track daily returns and metrics
         """
         input_file = self.raw_dir / f"{ticker}_raw.csv"
         
@@ -48,22 +59,60 @@ class DataProcessor:
         # Load raw data
         df = pd.read_csv(input_file, index_col=0, parse_dates=True)
         
-        # Choose price column
-        price_col = 'Adj Close' if use_adjusted and 'Adj Close' in df.columns else 'Close'
-        logger.info(f"  Using {price_col} for {ticker}")
-        
         # Create processed dataframe
         processed = pd.DataFrame(index=df.index)
-        processed['Close'] = df[price_col]
         
-        # Calculate daily returns
-        processed['Daily_Return'] = processed['Close'].pct_change()
-        processed['Daily_Return_Pct'] = processed['Daily_Return'] * 100
+        # ========================================================================
+        # DUAL-TRACK PROCESSING
+        # ========================================================================
         
-        # Cumulative metrics
+        # Track 1: Price Return (for LETF modeling - matches daily index objective)
+        processed['Close_Price'] = df['Close']
+        processed['Daily_Return_Price'] = processed['Close_Price'].pct_change()
+        processed['Daily_Return_Price_Pct'] = processed['Daily_Return_Price'] * 100
+        
+        # Track 2: Total Return (for investor analysis - includes dividends)
+        if 'Adj Close' in df.columns:
+            processed['Close_TotalReturn'] = df['Adj Close']
+            processed['Daily_Return_TotalReturn'] = processed['Close_TotalReturn'].pct_change()
+            processed['Daily_Return_TotalReturn_Pct'] = processed['Daily_Return_TotalReturn'] * 100
+            logger.info(f"  Dual-track: Price Return (Close) + Total Return (Adj Close)")
+        else:
+            # If no Adj Close available, total return = price return
+            processed['Close_TotalReturn'] = df['Close']
+            processed['Daily_Return_TotalReturn'] = processed['Daily_Return_Price']
+            processed['Daily_Return_TotalReturn_Pct'] = processed['Daily_Return_Price_Pct']
+            logger.info(f"  Single-track: No Adj Close available, using Close for both")
+        
+        # ========================================================================
+        # DEFAULT COLUMNS (for backward compatibility)
+        # ========================================================================
+        
+        # Set default columns based on use case
+        if default_to_price_return:
+            # Default to price return (correct for LETF modeling)
+            processed['Close'] = processed['Close_Price']
+            processed['Daily_Return'] = processed['Daily_Return_Price']
+            processed['Daily_Return_Pct'] = processed['Daily_Return_Price_Pct']
+            logger.info(f"  Default track: Price Return (for LETF modeling)")
+        else:
+            # Default to total return (for investor analysis)
+            processed['Close'] = processed['Close_TotalReturn']
+            processed['Daily_Return'] = processed['Daily_Return_TotalReturn']
+            processed['Daily_Return_Pct'] = processed['Daily_Return_TotalReturn_Pct']
+            logger.info(f"  Default track: Total Return (for investor analysis)")
+        
+        # ========================================================================
+        # CUMULATIVE METRICS (using default track)
+        # ========================================================================
+        
         processed['Growth_1Dollar'] = (1 + processed['Daily_Return']).cumprod()
         processed['Cumulative_Return'] = processed['Growth_1Dollar'] - 1
         processed['Cumulative_Return_Pct'] = processed['Cumulative_Return'] * 100
+        
+        # Also calculate cumulative for both tracks explicitly
+        processed['Growth_1Dollar_Price'] = (1 + processed['Daily_Return_Price']).cumprod()
+        processed['Growth_1Dollar_TotalReturn'] = (1 + processed['Daily_Return_TotalReturn']).cumprod()
         
         # Remove first row (NaN return)
         processed = processed.dropna()

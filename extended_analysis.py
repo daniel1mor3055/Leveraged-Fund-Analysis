@@ -3,6 +3,14 @@ Extended Analysis: Test DCA from 1985 onwards using NDX Index
 This tests if results are biased by only analyzing recent 30 years.
 
 Uses NDX (Nasdaq-100 Index) as QQQ proxy back to 1985.
+
+IMPORTANT DISCLAIMER:
+This analysis uses a SYNTHETIC 3x leveraged model applied to historical
+NDX data BEFORE leveraged ETFs like TQQQ existed (pre-2010). Results are
+illustrative only and do not represent actual achievable fund returns.
+The synthetic model includes estimated financing costs but cannot fully
+replicate real-world implementation frictions, regulatory constraints,
+or actual fund operations.
 """
 
 import pandas as pd
@@ -18,6 +26,24 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 print("="*80)
+print("IMPORTANT: HYPOTHETICAL SIMULATION")
+print("="*80)
+print("This analysis uses a SYNTHETIC 3x leveraged model applied to historical")
+print("NDX data BEFORE TQQQ existed (pre-2010). Results are ILLUSTRATIVE ONLY")
+print("and do not represent actual achievable fund returns.")
+print("")
+print("The model includes:")
+print("  - Daily leverage reset mechanics (Cheng-Madhavan framework)")
+print("  - Expense ratio drag (0.95% annual)")
+print("  - Estimated financing costs (varies by historical interest rates)")
+print("")
+print("The model does NOT include:")
+print("  - Actual swap/futures implementation costs")
+print("  - Rebalance slippage and tracking error")
+print("  - Regulatory or operational constraints")
+print("="*80)
+
+print("\n" + "="*80)
 print("EXTENDED ANALYSIS: 40 YEARS OF DATA (1985-2026)")
 print("="*80)
 print("\nUsing NDX (Nasdaq-100 Index) as proxy for QQQ back to 1985")
@@ -31,10 +57,20 @@ print(f"\nNDX Data Range: {ndx.index[0].date()} to {ndx.index[-1].date()}")
 print(f"Total days: {len(ndx):,}")
 print(f"Total years: {(ndx.index[-1] - ndx.index[0]).days / 365.25:.1f}")
 
-# Create synthetic 3x leveraged NDX
-print("\nBuilding synthetic 3x leveraged NDX...")
-synthetic_model = SyntheticLeveragedETF(leverage=3.0, expense_ratio=0.0095)
-synthetic_3x = synthetic_model.simulate(ndx['Daily_Return'], include_fees=True)
+# Create synthetic 3x leveraged NDX with financing costs
+print("\nBuilding synthetic 3x leveraged NDX (with financing costs)...")
+synthetic_model = SyntheticLeveragedETF(
+    leverage=3.0, 
+    expense_ratio=0.0095,
+    financing_spread=0.004  # 40 bps over risk-free
+)
+# Use price return for LETF modeling (if available), otherwise use default Daily_Return
+return_col = 'Daily_Return_Price' if 'Daily_Return_Price' in ndx.columns else 'Daily_Return'
+synthetic_3x = synthetic_model.simulate(
+    ndx[return_col], 
+    include_fees=True,
+    include_financing_costs=True  # Include estimated financing costs
+)
 
 # Prepare price data for DCA simulator
 ndx_prices = ndx[['Close']].copy()
@@ -96,16 +132,17 @@ print(f"Years covered: {(comparison['start_date'].max() - comparison['start_date
 # DISTRIBUTION ANALYSIS
 # ============================================================================
 
-def categorize_cagr(cagr):
-    if cagr < 0:
+def categorize_return(annual_return):
+    """Categorize annualized return (XIRR or CAGR) into performance buckets."""
+    if annual_return < 0:
         return "Terrible (Negative)"
-    elif cagr < 5:
+    elif annual_return < 5:
         return "Poor (0-5%)"
-    elif cagr < 10:
+    elif annual_return < 10:
         return "Fair (5-10%)"
-    elif cagr < 15:
+    elif annual_return < 15:
         return "Good (10-15%)"
-    elif cagr < 25:
+    elif annual_return < 25:
         return "Very Good (15-25%)"
     else:
         return "Excellent (25%+)"
@@ -119,8 +156,13 @@ category_order = [
     "Excellent (25%+)"
 ]
 
-comparison['NDX_Category'] = comparison['cagr_NDX'].apply(categorize_cagr)
-comparison['3x_Category'] = comparison['cagr_3x'].apply(categorize_cagr)
+# Use XIRR if available (correct money-weighted return), otherwise fall back to cagr
+# Note: cagr now defaults to xirr in the simulator, so this will use the correct metric
+xirr_col_ndx = 'xirr_NDX' if 'xirr_NDX' in comparison.columns else 'cagr_NDX'
+xirr_col_3x = 'xirr_3x' if 'xirr_3x' in comparison.columns else 'cagr_3x'
+
+comparison['NDX_Category'] = comparison[xirr_col_ndx].apply(categorize_return)
+comparison['3x_Category'] = comparison[xirr_col_3x].apply(categorize_return)
 
 print("\n" + "="*80)
 print("3X LEVERAGED PERFORMANCE DISTRIBUTION (40 YEARS)")
@@ -138,24 +180,26 @@ table_3x = pd.DataFrame({
 print(table_3x.to_string(index=False))
 
 print("\n" + "="*80)
-print("KEY STATISTICS")
+print("KEY STATISTICS (XIRR = Money-Weighted Annualized Return)")
 print("="*80)
+print("Note: XIRR correctly accounts for the timing of each DCA investment,")
+print("unlike simple CAGR which assumes all capital was invested at the start.")
 
 print("\n📊 NDX (1x) DCA PERFORMANCE:")
-print(f"  Median CAGR: {comparison['cagr_NDX'].median():.2f}%")
-print(f"  Mean CAGR: {comparison['cagr_NDX'].mean():.2f}%")
-print(f"  Best CAGR: {comparison['cagr_NDX'].max():.2f}%")
-print(f"  Worst CAGR: {comparison['cagr_NDX'].min():.2f}%")
-print(f"  Std Dev: {comparison['cagr_NDX'].std():.2f}%")
+print(f"  Median XIRR: {comparison[xirr_col_ndx].median():.2f}%")
+print(f"  Mean XIRR: {comparison[xirr_col_ndx].mean():.2f}%")
+print(f"  Best XIRR: {comparison[xirr_col_ndx].max():.2f}%")
+print(f"  Worst XIRR: {comparison[xirr_col_ndx].min():.2f}%")
+print(f"  Std Dev: {comparison[xirr_col_ndx].std():.2f}%")
 
-print("\n📊 SYNTHETIC 3x NDX DCA PERFORMANCE:")
-print(f"  Median CAGR: {comparison['cagr_3x'].median():.2f}%")
-print(f"  Mean CAGR: {comparison['cagr_3x'].mean():.2f}%")
-print(f"  Best CAGR: {comparison['cagr_3x'].max():.2f}%")
-print(f"  Worst CAGR: {comparison['cagr_3x'].min():.2f}%")
-print(f"  Std Dev: {comparison['cagr_3x'].std():.2f}%")
+print("\n📊 SYNTHETIC 3x NDX DCA PERFORMANCE (HYPOTHETICAL):")
+print(f"  Median XIRR: {comparison[xirr_col_3x].median():.2f}%")
+print(f"  Mean XIRR: {comparison[xirr_col_3x].mean():.2f}%")
+print(f"  Best XIRR: {comparison[xirr_col_3x].max():.2f}%")
+print(f"  Worst XIRR: {comparison[xirr_col_3x].min():.2f}%")
+print(f"  Std Dev: {comparison[xirr_col_3x].std():.2f}%")
 
-loss_pct_3x = (comparison['cagr_3x'] < 0).sum() / len(comparison) * 100
+loss_pct_3x = (comparison[xirr_col_3x] < 0).sum() / len(comparison) * 100
 win_rate_3x = comparison['3x_Outperformed'].sum() / len(comparison) * 100
 
 print(f"\n⚠️  Probability of Loss (3x): {loss_pct_3x:.1f}%")
@@ -197,14 +241,14 @@ for cat in category_order:
     print(f"  {cat:25s}: {diff:+5.1f} percentage points")
 
 # Compare medians
-print(f"\nMedian CAGR (3x):")
-print(f"  Recent: {recent['cagr_3x'].median():.2f}%")
-print(f"  Historical: {historical['cagr_3x'].median():.2f}%")
-print(f"  Difference: {recent['cagr_3x'].median() - historical['cagr_3x'].median():+.2f} percentage points")
+print(f"\nMedian XIRR (3x):")
+print(f"  Recent: {recent[xirr_col_3x].median():.2f}%")
+print(f"  Historical: {historical[xirr_col_3x].median():.2f}%")
+print(f"  Difference: {recent[xirr_col_3x].median() - historical[xirr_col_3x].median():+.2f} percentage points")
 
 print(f"\nLoss Probability (3x):")
-recent_loss = (recent['cagr_3x'] < 0).sum() / len(recent) * 100
-hist_loss = (historical['cagr_3x'] < 0).sum() / len(historical) * 100
+recent_loss = (recent[xirr_col_3x] < 0).sum() / len(recent) * 100
+hist_loss = (historical[xirr_col_3x] < 0).sum() / len(historical) * 100
 print(f"  Recent: {recent_loss:.1f}%")
 print(f"  Historical: {hist_loss:.1f}%")
 print(f"  Difference: {recent_loss - hist_loss:+.1f} percentage points")
@@ -248,18 +292,18 @@ ax2.set_xticklabels(category_order, rotation=45, ha='right')
 ax2.legend(fontsize=11)
 ax2.grid(True, alpha=0.3, axis='y')
 
-# 3. Time series of CAGR outcomes
+# 3. Time series of XIRR outcomes
 ax3 = axes[1, 0]
-ax3.scatter(comparison['start_date'], comparison['cagr_3x'], 
-           c=comparison['cagr_3x'], cmap='RdYlGn', s=20, alpha=0.6, edgecolors='black', linewidth=0.5)
+ax3.scatter(comparison['start_date'], comparison[xirr_col_3x], 
+           c=comparison[xirr_col_3x], cmap='RdYlGn', s=20, alpha=0.6, edgecolors='black', linewidth=0.5)
 ax3.axhline(y=0, color='red', linestyle='--', linewidth=2, alpha=0.7, label='Break-even')
-ax3.axhline(y=comparison['cagr_3x'].median(), color='blue', linestyle='-', linewidth=2, 
-           alpha=0.7, label=f'Median: {comparison["cagr_3x"].median():.1f}%')
+ax3.axhline(y=comparison[xirr_col_3x].median(), color='blue', linestyle='-', linewidth=2, 
+           alpha=0.7, label=f'Median: {comparison[xirr_col_3x].median():.1f}%')
 ax3.axvline(x=cutoff_date, color='black', linestyle=':', linewidth=2, alpha=0.5, label='Recent Era Starts')
-ax3.set_title('3x CAGR by Start Date (40 Years)\n(Color-coded: Green=Good, Red=Bad)', 
+ax3.set_title('3x XIRR by Start Date (40 Years)\n(Color-coded: Green=Good, Red=Bad)', 
              fontsize=14, fontweight='bold')
 ax3.set_xlabel('DCA Start Date', fontsize=11, fontweight='bold')
-ax3.set_ylabel('CAGR (%)', fontsize=11, fontweight='bold')
+ax3.set_ylabel('XIRR (%)', fontsize=11, fontweight='bold')
 ax3.legend(fontsize=10)
 ax3.grid(True, alpha=0.3)
 
@@ -273,22 +317,22 @@ summary_data = [
     ['', '', '', ''],
     ['Scenarios', f"{len(comparison)}", f"{len(recent)}", f"{len(historical)}"],
     ['', '', '', ''],
-    ['Median CAGR', f"{comparison['cagr_3x'].median():.1f}%", 
-     f"{recent['cagr_3x'].median():.1f}%", f"{historical['cagr_3x'].median():.1f}%"],
-    ['Mean CAGR', f"{comparison['cagr_3x'].mean():.1f}%", 
-     f"{recent['cagr_3x'].mean():.1f}%", f"{historical['cagr_3x'].mean():.1f}%"],
+    ['Median XIRR', f"{comparison[xirr_col_3x].median():.1f}%", 
+     f"{recent[xirr_col_3x].median():.1f}%", f"{historical[xirr_col_3x].median():.1f}%"],
+    ['Mean XIRR', f"{comparison[xirr_col_3x].mean():.1f}%", 
+     f"{recent[xirr_col_3x].mean():.1f}%", f"{historical[xirr_col_3x].mean():.1f}%"],
     ['', '', '', ''],
-    ['Best CAGR', f"{comparison['cagr_3x'].max():.1f}%", 
-     f"{recent['cagr_3x'].max():.1f}%", f"{historical['cagr_3x'].max():.1f}%"],
-    ['Worst CAGR', f"{comparison['cagr_3x'].min():.1f}%", 
-     f"{recent['cagr_3x'].min():.1f}%", f"{historical['cagr_3x'].min():.1f}%"],
+    ['Best XIRR', f"{comparison[xirr_col_3x].max():.1f}%", 
+     f"{recent[xirr_col_3x].max():.1f}%", f"{historical[xirr_col_3x].max():.1f}%"],
+    ['Worst XIRR', f"{comparison[xirr_col_3x].min():.1f}%", 
+     f"{recent[xirr_col_3x].min():.1f}%", f"{historical[xirr_col_3x].min():.1f}%"],
     ['', '', '', ''],
     ['% Negative', f"{loss_pct_3x:.1f}%", f"{recent_loss:.1f}%", f"{hist_loss:.1f}%"],
     ['% Excellent (25%+)', f"{pct_3x.get('Excellent (25%+)', 0):.1f}%",
      f"{recent_pct.get('Excellent (25%+)', 0):.1f}%", f"{hist_pct.get('Excellent (25%+)', 0):.1f}%"],
     ['', '', '', ''],
-    ['Std Dev', f"{comparison['cagr_3x'].std():.1f}%", 
-     f"{recent['cagr_3x'].std():.1f}%", f"{historical['cagr_3x'].std():.1f}%"],
+    ['Std Dev', f"{comparison[xirr_col_3x].std():.1f}%", 
+     f"{recent[xirr_col_3x].std():.1f}%", f"{historical[xirr_col_3x].std():.1f}%"],
 ]
 
 table = ax4.table(cellText=summary_data, cellLoc='left', loc='center',
@@ -323,19 +367,22 @@ print("\n" + "="*80)
 print("CONCLUSION: IS THERE BIAS?")
 print("="*80)
 
-diff_median = abs(recent['cagr_3x'].median() - historical['cagr_3x'].median())
+diff_median = abs(recent[xirr_col_3x].median() - historical[xirr_col_3x].median())
 diff_loss = abs(recent_loss - hist_loss)
 
 if diff_median < 5 and diff_loss < 10:
     print("\n✅ NO SIGNIFICANT BIAS DETECTED")
-    print(f"   - Median CAGR difference: {diff_median:.1f} percentage points (< 5% threshold)")
+    print(f"   - Median XIRR difference: {diff_median:.1f} percentage points (< 5% threshold)")
     print(f"   - Loss probability difference: {diff_loss:.1f} percentage points (< 10% threshold)")
     print("   - Distribution patterns are similar across eras")
     print("   - Results appear robust across different market conditions")
 else:
     print("\n⚠️ POTENTIAL BIAS DETECTED")
-    print(f"   - Median CAGR difference: {diff_median:.1f} percentage points")
+    print(f"   - Median XIRR difference: {diff_median:.1f} percentage points")
     print(f"   - Loss probability difference: {diff_loss:.1f} percentage points")
     print("   - Distribution may be influenced by specific market conditions")
 
 print("\n" + "="*80)
+print("REMINDER: This analysis is HYPOTHETICAL. Pre-2010 leveraged fund")
+print("returns could not have been achieved in practice.")
+print("="*80)

@@ -81,14 +81,33 @@ class LeveragedFundAnalysis:
             # Step 3: Build synthetic TQQQ
             logger.info("\n[STEP 3/8] Building synthetic TQQQ model...")
             qqq = processed_data['QQQ']
-            synthetic_model = SyntheticLeveragedETF(leverage=3.0, expense_ratio=0.0095)
             
-            # With fees
-            synthetic_with_fees = synthetic_model.simulate(qqq['Daily_Return'], include_fees=True)
+            # Use price return for LETF modeling (matches daily index objective)
+            # If dual-track is available, use price return; otherwise fall back to default
+            return_col = 'Daily_Return_Price' if 'Daily_Return_Price' in qqq.columns else 'Daily_Return'
+            logger.info(f"  Using '{return_col}' for synthetic LETF modeling")
+            
+            # Initialize model with financing costs
+            synthetic_model = SyntheticLeveragedETF(
+                leverage=3.0, 
+                expense_ratio=0.0095,
+                financing_spread=0.004  # 40 bps over risk-free
+            )
+            
+            # With fees and financing costs
+            synthetic_with_fees = synthetic_model.simulate(
+                qqq[return_col], 
+                include_fees=True,
+                include_financing_costs=True
+            )
             synthetic_with_fees.to_csv('data/processed/synthetic_tqqq_with_fees.csv')
             
-            # Frictionless (theoretical baseline)
-            synthetic_frictionless = synthetic_model.simulate(qqq['Daily_Return'], include_fees=False)
+            # Frictionless (theoretical baseline - no fees or financing costs)
+            synthetic_frictionless = synthetic_model.simulate(
+                qqq[return_col], 
+                include_fees=False,
+                include_financing_costs=False
+            )
             synthetic_frictionless.to_csv('data/processed/synthetic_tqqq_frictionless.csv')
             
             # Compare to actual TQQQ if available
@@ -173,8 +192,11 @@ class LeveragedFundAnalysis:
         """Analyze variance drag effects."""
         analyzer = VarianceDragAnalyzer(leverage=3.0)
         
+        # Use price return for variance drag analysis (consistent with LETF modeling)
+        return_col = 'Daily_Return_Price' if 'Daily_Return_Price' in qqq_df.columns else 'Daily_Return'
+        
         # Overall variance drag
-        drag_metrics = analyzer.calculate_variance_drag(qqq_df['Daily_Return'])
+        drag_metrics = analyzer.calculate_variance_drag(qqq_df[return_col])
         
         # Compare naïve vs actual
         comparison = analyzer.compare_naive_vs_actual(qqq_df, synthetic_df)
@@ -233,8 +255,10 @@ class LeveragedFundAnalysis:
                                 parse_dates=['start_date', 'end_date_QQQ', 'end_date_TQQQ'])
         
         if len(comparison) > 0:
-            # DCA outcomes
-            viz.plot_dca_outcomes_by_start_date(comparison, metric='cagr')
+            # DCA outcomes - use xirr if available (correct metric), else fall back to cagr
+            # Note: The visualizer handles both column names internally
+            xirr_col = 'xirr' if 'xirr_QQQ' in comparison.columns else 'cagr'
+            viz.plot_dca_outcomes_by_start_date(comparison, metric=xirr_col)
             viz.plot_dca_outcomes_by_start_date(comparison, metric='final_value')
             viz.plot_dca_outperformance_heatmap(comparison)
             viz.plot_distribution_of_outcomes(comparison)
@@ -286,6 +310,12 @@ class LeveragedFundAnalysis:
             logger.warning("Comparison data is empty - skipping summary report")
             return
         
+        # Determine which return column to use
+        # xirr is the correct money-weighted return for DCA; cagr is legacy
+        qqq_return_col = 'xirr_QQQ' if 'xirr_QQQ' in comparison.columns else 'cagr_QQQ'
+        tqqq_return_col = 'xirr_TQQQ' if 'xirr_TQQQ' in comparison.columns else 'cagr_TQQQ'
+        return_label = 'XIRR' if 'xirr_QQQ' in comparison.columns else 'CAGR'
+        
         report = []
         report.append("="*80)
         report.append("LEVERAGED FUND ANALYSIS - SUMMARY REPORT")
@@ -299,6 +329,14 @@ class LeveragedFundAnalysis:
         report.append("  - Assets Analyzed: QQQ, TQQQ, Synthetic 3x TQQQ")
         report.append("")
         
+        report.append("METHODOLOGY:")
+        report.append(f"  - Return Metric: {return_label} (Extended Internal Rate of Return)")
+        report.append("    XIRR is the correct money-weighted return for DCA, accounting for")
+        report.append("    the timing of each investment contribution.")
+        report.append("  - Synthetic Model: Daily-reset 3x leverage with expense ratio + financing costs")
+        report.append("  - Data Processing: Price-return basis for LETF modeling (matches fund objective)")
+        report.append("")
+        
         report.append("KEY FINDINGS:")
         report.append(f"  - Number of scenarios tested: {len(comparison)}")
         if 'TQQQ_outperformed' in comparison.columns:
@@ -306,27 +344,39 @@ class LeveragedFundAnalysis:
             report.append(f"  - TQQQ win rate: {win_rate:.1f}%")
         report.append("")
         
-        report.append("QQQ DCA PERFORMANCE:")
-        report.append(f"  - Median CAGR: {comparison['cagr_QQQ'].median():.2f}%")
-        report.append(f"  - Mean CAGR: {comparison['cagr_QQQ'].mean():.2f}%")
-        report.append(f"  - Best CAGR: {comparison['cagr_QQQ'].max():.2f}%")
-        report.append(f"  - Worst CAGR: {comparison['cagr_QQQ'].min():.2f}%")
-        report.append(f"  - Std Dev: {comparison['cagr_QQQ'].std():.2f}%")
+        report.append(f"QQQ DCA PERFORMANCE ({return_label}):")
+        report.append(f"  - Median: {comparison[qqq_return_col].median():.2f}%")
+        report.append(f"  - Mean: {comparison[qqq_return_col].mean():.2f}%")
+        report.append(f"  - Best: {comparison[qqq_return_col].max():.2f}%")
+        report.append(f"  - Worst: {comparison[qqq_return_col].min():.2f}%")
+        report.append(f"  - Std Dev: {comparison[qqq_return_col].std():.2f}%")
         report.append("")
         
-        report.append("TQQQ DCA PERFORMANCE:")
-        report.append(f"  - Median CAGR: {comparison['cagr_TQQQ'].median():.2f}%")
-        report.append(f"  - Mean CAGR: {comparison['cagr_TQQQ'].mean():.2f}%")
-        report.append(f"  - Best CAGR: {comparison['cagr_TQQQ'].max():.2f}%")
-        report.append(f"  - Worst CAGR: {comparison['cagr_TQQQ'].min():.2f}%")
-        report.append(f"  - Std Dev: {comparison['cagr_TQQQ'].std():.2f}%")
+        report.append(f"TQQQ DCA PERFORMANCE ({return_label}):")
+        report.append(f"  - Median: {comparison[tqqq_return_col].median():.2f}%")
+        report.append(f"  - Mean: {comparison[tqqq_return_col].mean():.2f}%")
+        report.append(f"  - Best: {comparison[tqqq_return_col].max():.2f}%")
+        report.append(f"  - Worst: {comparison[tqqq_return_col].min():.2f}%")
+        report.append(f"  - Std Dev: {comparison[tqqq_return_col].std():.2f}%")
+        report.append("")
+        
+        # Calculate loss probability
+        qqq_loss_pct = (comparison[qqq_return_col] < 0).sum() / len(comparison) * 100
+        tqqq_loss_pct = (comparison[tqqq_return_col] < 0).sum() / len(comparison) * 100
+        report.append("RISK METRICS:")
+        report.append(f"  - QQQ probability of loss: {qqq_loss_pct:.1f}%")
+        report.append(f"  - TQQQ probability of loss: {tqqq_loss_pct:.1f}%")
         report.append("")
         
         if 'TQQQ_vs_QQQ_value_ratio' in comparison.columns:
             report.append("RELATIVE PERFORMANCE:")
             report.append(f"  - Median TQQQ/QQQ value ratio: {comparison['TQQQ_vs_QQQ_value_ratio'].median():.2f}x")
             report.append(f"  - Mean TQQQ/QQQ value ratio: {comparison['TQQQ_vs_QQQ_value_ratio'].mean():.2f}x")
-            report.append(f"  - Median CAGR difference: {comparison['TQQQ_vs_QQQ_cagr_diff'].median():+.2f}%")
+            
+            # Use correct diff column based on available columns
+            diff_col = 'TQQQ_vs_QQQ_xirr_diff' if 'TQQQ_vs_QQQ_xirr_diff' in comparison.columns else 'TQQQ_vs_QQQ_cagr_diff'
+            if diff_col in comparison.columns:
+                report.append(f"  - Median {return_label} difference: {comparison[diff_col].median():+.2f}%")
             report.append("")
         
         report.append("="*80)

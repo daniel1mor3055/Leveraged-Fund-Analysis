@@ -8,27 +8,38 @@ ANALYSIS PARAMETERS:
   - Holding Period: 10 years
   - Assets Analyzed: QQQ, TQQQ, Synthetic 3x TQQQ
 
+METHODOLOGY:
+  - Return Metric: XIRR (Extended Internal Rate of Return)
+    XIRR is the correct money-weighted return for DCA, accounting for
+    the timing of each investment contribution.
+  - Synthetic Model: Daily-reset 3x leverage with expense ratio + financing costs
+  - Data Processing: Price-return basis for LETF modeling (matches fund objective)
+
 KEY FINDINGS:
   - Number of scenarios tested: 68
-  - TQQQ win rate: 83.8%
+  - TQQQ win rate: 80.9%
 
-QQQ DCA PERFORMANCE:
-  - Median CAGR: 8.66%
-  - Mean CAGR: 7.93%
-  - Best CAGR: 13.57%
-  - Worst CAGR: -3.47%
-  - Std Dev: 3.44%
+QQQ DCA PERFORMANCE (XIRR):
+  - Median: 14.82%
+  - Mean: 13.61%
+  - Best: 23.03%
+  - Worst: -7.61%
+  - Std Dev: 5.94%
 
-TQQQ DCA PERFORMANCE:
-  - Median CAGR: 21.74%
-  - Mean CAGR: 19.20%
-  - Best CAGR: 39.72%
-  - Worst CAGR: -15.77%
-  - Std Dev: 12.38%
+TQQQ DCA PERFORMANCE (XIRR):
+  - Median: 29.48%
+  - Mean: 24.94%
+  - Best: 55.23%
+  - Worst: -50.65%
+  - Std Dev: 19.91%
+
+RISK METRICS:
+  - QQQ probability of loss: 2.9%
+  - TQQQ probability of loss: 11.8%
 
 RELATIVE PERFORMANCE:
-  - Median TQQQ/QQQ value ratio: 3.03x
-  - Mean TQQQ/QQQ value ratio: 3.25x
-  - Median CAGR difference: +12.78%
+  - Median TQQQ/QQQ value ratio: 2.14x
+  - Mean TQQQ/QQQ value ratio: 2.29x
+  - Median XIRR difference: +14.15%
 
 ================================================================================

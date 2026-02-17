@@ -3,6 +3,9 @@ Dollar-Cost Averaging (DCA) simulation engine.
 
 Simulates periodic investments into QQQ, TQQQ, or synthetic leveraged ETFs
 across different start dates to test timing sensitivity.
+
+Uses XIRR (Extended Internal Rate of Return) for accurate money-weighted
+return calculation that properly accounts for the timing of each cash flow.
 """
 
 import pandas as pd
@@ -11,6 +14,7 @@ from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta
 from pathlib import Path
 import logging
+from scipy.optimize import brentq
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -89,15 +93,22 @@ class DCASimulator:
         
         # Calculate final portfolio value
         final_price = period_data.iloc[-1]['Close']
+        final_date = period_data.index[-1]
         final_value = total_shares * final_price
         
         # Calculate returns
         total_return = final_value - total_invested
         total_return_pct = (total_return / total_invested) * 100 if total_invested > 0 else 0
         
-        # Calculate CAGR
+        # Calculate time period
         years = (end_date - start_date).days / 365.25
-        cagr = ((final_value / total_invested) ** (1 / years) - 1) * 100 if years > 0 and total_invested > 0 else 0
+        
+        # Calculate XIRR (correct money-weighted return for DCA)
+        xirr = self._calculate_xirr(purchases, final_value, final_date)
+        
+        # Calculate simple CAGR (kept for reference - NOTE: this is INCORRECT for DCA
+        # as it assumes all capital was invested at start_date)
+        simple_cagr = ((final_value / total_invested) ** (1 / years) - 1) * 100 if years > 0 and total_invested > 0 else 0
         
         # Calculate average purchase price
         avg_price = total_invested / total_shares if total_shares > 0 else 0
@@ -113,7 +124,9 @@ class DCASimulator:
             'final_value': final_value,
             'total_return': total_return,
             'total_return_pct': total_return_pct,
-            'cagr': cagr,
+            'xirr': xirr,  # Correct money-weighted annualized return
+            'simple_cagr': simple_cagr,  # Kept for backwards compatibility (incorrect for DCA)
+            'cagr': xirr,  # Default to correct metric
             'years': years,
             'purchases': purchases
         }
@@ -145,6 +158,55 @@ class DCASimulator:
         if len(future_dates) > 0:
             return future_dates[0]
         return None
+    
+    def _calculate_xirr(self, purchases: list, final_value: float, 
+                        final_date: pd.Timestamp) -> float:
+        """
+        Calculate XIRR (Extended Internal Rate of Return) for DCA cash flows.
+        
+        XIRR properly accounts for the timing of each investment (money-weighted return),
+        unlike simple CAGR which incorrectly assumes all capital was invested at the start.
+        
+        Args:
+            purchases: List of purchase dictionaries with 'date' and 'invested' keys
+            final_value: Final portfolio value at end date
+            final_date: End date for the investment period
+            
+        Returns:
+            Annualized XIRR as a percentage (e.g., 10.5 for 10.5%)
+        """
+        if not purchases or final_value <= 0:
+            return 0.0
+        
+        # Build cash flow series: negative for investments (outflows), positive for final value (inflow)
+        dates = [p['date'] for p in purchases] + [final_date]
+        amounts = [-p['invested'] for p in purchases] + [final_value]
+        
+        # Convert dates to year fractions from first date
+        base_date = dates[0]
+        year_fractions = [(d - base_date).days / 365.25 for d in dates]
+        
+        def npv(rate):
+            """Calculate NPV for a given annual rate."""
+            return sum(cf / ((1 + rate) ** t) for cf, t in zip(amounts, year_fractions))
+        
+        try:
+            # Use Brent's method to find the rate where NPV = 0
+            # Search between -99% (near total loss) and 1000% (10x annual return)
+            xirr = brentq(npv, -0.99, 10.0, xtol=1e-8)
+            return xirr * 100  # Convert to percentage
+        except ValueError:
+            # If no root found in range, try a wider/different range or return 0
+            try:
+                # Try more conservative range for edge cases
+                xirr = brentq(npv, -0.9999, 100.0, xtol=1e-6)
+                return xirr * 100
+            except ValueError:
+                logger.warning("XIRR calculation failed to converge")
+                return 0.0
+        except Exception as e:
+            logger.warning(f"XIRR calculation error: {e}")
+            return 0.0
     
     def rolling_start_dates_analysis(self, frequency: str = 'M', investment_amount: float = 1000.0,
                                      holding_period_years: int = 10, 
@@ -198,7 +260,9 @@ class DCASimulator:
                     'final_value': result['final_value'],
                     'total_return': result['total_return'],
                     'total_return_pct': result['total_return_pct'],
-                    'cagr': result['cagr'],
+                    'xirr': result['xirr'],  # Correct money-weighted return
+                    'simple_cagr': result['simple_cagr'],  # For reference only
+                    'cagr': result['cagr'],  # Defaults to xirr (correct metric)
                     'avg_purchase_price': result['avg_purchase_price'],
                     'final_price': result['final_price']
                 })
@@ -242,9 +306,13 @@ if __name__ == '__main__':
     print(f"DCA Analysis Summary (10-year holding periods)")
     print("="*60)
     print(f"Scenarios tested: {len(results)}")
-    print(f"Median CAGR: {results['cagr'].median():.2f}%")
-    print(f"Mean CAGR: {results['cagr'].mean():.2f}%")
-    print(f"Best CAGR: {results['cagr'].max():.2f}%")
-    print(f"Worst CAGR: {results['cagr'].min():.2f}%")
-    print(f"Std Dev CAGR: {results['cagr'].std():.2f}%")
+    print(f"\nXIRR (Correct Money-Weighted Return):")
+    print(f"  Median XIRR: {results['xirr'].median():.2f}%")
+    print(f"  Mean XIRR: {results['xirr'].mean():.2f}%")
+    print(f"  Best XIRR: {results['xirr'].max():.2f}%")
+    print(f"  Worst XIRR: {results['xirr'].min():.2f}%")
+    print(f"  Std Dev: {results['xirr'].std():.2f}%")
+    print(f"\nSimple CAGR (For Reference - Incorrect for DCA):")
+    print(f"  Median: {results['simple_cagr'].median():.2f}%")
+    print(f"  Mean: {results['simple_cagr'].mean():.2f}%")
     print("="*60)

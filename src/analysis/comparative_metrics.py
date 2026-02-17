@@ -6,6 +6,10 @@ Compares:
 - TQQQ DCA
 - Synthetic TQQQ
 across different start dates and market conditions.
+
+NOTE: This module supports both XIRR (money-weighted return) and legacy CAGR metrics.
+XIRR is the correct metric for DCA analysis as it accounts for the timing of each
+cash flow. The DCA simulator now defaults 'cagr' to XIRR values for consistency.
 """
 
 import pandas as pd
@@ -62,17 +66,29 @@ class ComparativeAnalyzer:
         comparison['TQQQ_vs_QQQ_cagr_diff'] = comparison['cagr_TQQQ'] - comparison['cagr_QQQ']
         comparison['TQQQ_outperformed'] = comparison['final_value_TQQQ'] > comparison['final_value_QQQ']
         
-        # Log summary
+        # Also compute XIRR difference if xirr columns are available
+        if 'xirr_QQQ' in comparison.columns and 'xirr_TQQQ' in comparison.columns:
+            comparison['TQQQ_vs_QQQ_xirr_diff'] = comparison['xirr_TQQQ'] - comparison['xirr_QQQ']
+        
+        # Log summary - use xirr if available, otherwise cagr
         win_rate = (comparison['TQQQ_outperformed'].sum() / len(comparison)) * 100
         avg_value_ratio = comparison['TQQQ_vs_QQQ_value_ratio'].mean()
         median_value_ratio = comparison['TQQQ_vs_QQQ_value_ratio'].median()
+        
+        # Determine which return metric to report
+        if 'xirr_QQQ' in comparison.columns:
+            return_diff_col = 'TQQQ_vs_QQQ_xirr_diff'
+            return_label = 'XIRR'
+        else:
+            return_diff_col = 'TQQQ_vs_QQQ_cagr_diff'
+            return_label = 'CAGR'
         
         logger.info(f"\nStrategy Comparison Summary:")
         logger.info(f"  Scenarios: {len(comparison)}")
         logger.info(f"  TQQQ win rate: {win_rate:.1f}%")
         logger.info(f"  Avg TQQQ/QQQ value ratio: {avg_value_ratio:.2f}x")
         logger.info(f"  Median TQQQ/QQQ value ratio: {median_value_ratio:.2f}x")
-        logger.info(f"  Median CAGR diff: {comparison['TQQQ_vs_QQQ_cagr_diff'].median():+.2f}%")
+        logger.info(f"  Median {return_label} diff: {comparison[return_diff_col].median():+.2f}%")
         
         return comparison
     
@@ -180,10 +196,22 @@ class ComparativeAnalyzer:
         Returns:
             DataFrame with worst scenarios
         """
-        worst = comparison_df.nsmallest(n, 'cagr_TQQQ')[
-            ['start_date', 'end_date_TQQQ', 'cagr_QQQ', 'cagr_TQQQ', 
-             'TQQQ_vs_QQQ_cagr_diff', 'final_value_QQQ', 'final_value_TQQQ']
-        ]
+        # Use xirr columns if available, otherwise fall back to cagr
+        if 'xirr_TQQQ' in comparison_df.columns:
+            sort_col = 'xirr_TQQQ'
+            return_cols = ['start_date', 'end_date_TQQQ', 'xirr_QQQ', 'xirr_TQQQ', 
+                          'TQQQ_vs_QQQ_xirr_diff', 'final_value_QQQ', 'final_value_TQQQ']
+            # Filter to only columns that exist
+            return_cols = [c for c in return_cols if c in comparison_df.columns]
+            if 'TQQQ_vs_QQQ_xirr_diff' not in return_cols and 'TQQQ_vs_QQQ_cagr_diff' in comparison_df.columns:
+                return_cols.append('TQQQ_vs_QQQ_cagr_diff')
+        else:
+            sort_col = 'cagr_TQQQ'
+            return_cols = ['start_date', 'end_date_TQQQ', 'cagr_QQQ', 'cagr_TQQQ', 
+                          'TQQQ_vs_QQQ_cagr_diff', 'final_value_QQQ', 'final_value_TQQQ']
+            return_cols = [c for c in return_cols if c in comparison_df.columns]
+        
+        worst = comparison_df.nsmallest(n, sort_col)[return_cols]
         
         logger.info(f"\nWorst {n} TQQQ DCA scenarios:")
         print(worst.to_string(index=False))
@@ -201,10 +229,22 @@ class ComparativeAnalyzer:
         Returns:
             DataFrame with best scenarios
         """
-        best = comparison_df.nlargest(n, 'cagr_TQQQ')[
-            ['start_date', 'end_date_TQQQ', 'cagr_QQQ', 'cagr_TQQQ', 
-             'TQQQ_vs_QQQ_cagr_diff', 'final_value_QQQ', 'final_value_TQQQ']
-        ]
+        # Use xirr columns if available, otherwise fall back to cagr
+        if 'xirr_TQQQ' in comparison_df.columns:
+            sort_col = 'xirr_TQQQ'
+            return_cols = ['start_date', 'end_date_TQQQ', 'xirr_QQQ', 'xirr_TQQQ', 
+                          'TQQQ_vs_QQQ_xirr_diff', 'final_value_QQQ', 'final_value_TQQQ']
+            # Filter to only columns that exist
+            return_cols = [c for c in return_cols if c in comparison_df.columns]
+            if 'TQQQ_vs_QQQ_xirr_diff' not in return_cols and 'TQQQ_vs_QQQ_cagr_diff' in comparison_df.columns:
+                return_cols.append('TQQQ_vs_QQQ_cagr_diff')
+        else:
+            sort_col = 'cagr_TQQQ'
+            return_cols = ['start_date', 'end_date_TQQQ', 'cagr_QQQ', 'cagr_TQQQ', 
+                          'TQQQ_vs_QQQ_cagr_diff', 'final_value_QQQ', 'final_value_TQQQ']
+            return_cols = [c for c in return_cols if c in comparison_df.columns]
+        
+        best = comparison_df.nlargest(n, sort_col)[return_cols]
         
         logger.info(f"\nBest {n} TQQQ DCA scenarios:")
         print(best.to_string(index=False))

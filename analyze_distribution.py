@@ -7,6 +7,10 @@ Creates clear tables showing what % of start dates resulted in:
 - Fair outcomes
 - Good outcomes
 - Excellent outcomes
+
+NOTE: This script uses XIRR (money-weighted return) which correctly accounts
+for the timing of each DCA investment. The 'cagr' column now contains XIRR
+values by default from the updated DCA simulator.
 """
 
 import pandas as pd
@@ -24,30 +28,37 @@ print("="*80)
 print(f"\nTotal scenarios analyzed: {len(comparison)}")
 print(f"Investment: $1,000/month for 10 years")
 print(f"Total invested per scenario: ${comparison['total_invested_QQQ'].iloc[0]:,.0f}")
+print("")
+print("NOTE: Returns shown are XIRR (money-weighted), which correctly")
+print("accounts for the timing of each DCA investment.")
 print("="*80)
 
 # ============================================================================
-# PART 1: CAGR DISTRIBUTION
+# PART 1: ANNUALIZED RETURN (XIRR) DISTRIBUTION
 # ============================================================================
 
-def categorize_cagr(cagr):
-    """Categorize CAGR into performance buckets."""
-    if cagr < 0:
+def categorize_return(annual_return):
+    """Categorize annualized return (XIRR) into performance buckets."""
+    if annual_return < 0:
         return "Terrible (Negative)"
-    elif cagr < 5:
+    elif annual_return < 5:
         return "Poor (0-5%)"
-    elif cagr < 10:
+    elif annual_return < 10:
         return "Fair (5-10%)"
-    elif cagr < 15:
+    elif annual_return < 15:
         return "Good (10-15%)"
-    elif cagr < 25:
+    elif annual_return < 25:
         return "Very Good (15-25%)"
     else:
         return "Excellent (25%+)"
 
+# Use xirr columns if available, otherwise fall back to cagr (which now = xirr)
+qqq_return_col = 'xirr_QQQ' if 'xirr_QQQ' in comparison.columns else 'cagr_QQQ'
+tqqq_return_col = 'xirr_TQQQ' if 'xirr_TQQQ' in comparison.columns else 'cagr_TQQQ'
+
 # Categorize outcomes
-comparison['QQQ_Category'] = comparison['cagr_QQQ'].apply(categorize_cagr)
-comparison['TQQQ_Category'] = comparison['cagr_TQQQ'].apply(categorize_cagr)
+comparison['QQQ_Category'] = comparison[qqq_return_col].apply(categorize_return)
+comparison['TQQQ_Category'] = comparison[tqqq_return_col].apply(categorize_return)
 
 # Define category order
 category_order = [
@@ -60,7 +71,7 @@ category_order = [
 ]
 
 print("\n" + "="*80)
-print("CAGR DISTRIBUTION")
+print("ANNUALIZED RETURN (XIRR) DISTRIBUTION")
 print("="*80)
 
 # QQQ Distribution
@@ -170,25 +181,25 @@ print("RISK ANALYSIS")
 print("="*80)
 
 # Calculate percentiles
-qqq_percentiles = comparison['cagr_QQQ'].quantile([0.1, 0.25, 0.5, 0.75, 0.9])
-tqqq_percentiles = comparison['cagr_TQQQ'].quantile([0.1, 0.25, 0.5, 0.75, 0.9])
+qqq_percentiles = comparison[qqq_return_col].quantile([0.1, 0.25, 0.5, 0.75, 0.9])
+tqqq_percentiles = comparison[tqqq_return_col].quantile([0.1, 0.25, 0.5, 0.75, 0.9])
 
-print("\n📉 CAGR PERCENTILES:")
+print("\n📉 XIRR PERCENTILES (Money-Weighted Annualized Return):")
 print("-"*80)
 percentile_table = pd.DataFrame({
     'Percentile': ['10th (Bottom 10%)', '25th (Bottom 25%)', '50th (Median)', 
                    '75th (Top 25%)', '90th (Top 10%)'],
-    'QQQ CAGR': [f"{p:.2f}%" for p in qqq_percentiles.values],
-    'TQQQ CAGR': [f"{p:.2f}%" for p in tqqq_percentiles.values]
+    'QQQ XIRR': [f"{p:.2f}%" for p in qqq_percentiles.values],
+    'TQQQ XIRR': [f"{p:.2f}%" for p in tqqq_percentiles.values]
 })
 print(percentile_table.to_string(index=False))
 
-print("\n⚠️  PROBABILITY OF LOSS (Negative CAGR):")
+print("\n⚠️  PROBABILITY OF LOSS (Negative Return):")
 print("-"*80)
-qqq_loss_pct = (comparison['cagr_QQQ'] < 0).sum() / len(comparison) * 100
-tqqq_loss_pct = (comparison['cagr_TQQQ'] < 0).sum() / len(comparison) * 100
-print(f"QQQ:  {qqq_loss_pct:.1f}% ({(comparison['cagr_QQQ'] < 0).sum()} out of {len(comparison)} scenarios)")
-print(f"TQQQ: {tqqq_loss_pct:.1f}% ({(comparison['cagr_TQQQ'] < 0).sum()} out of {len(comparison)} scenarios)")
+qqq_loss_pct = (comparison[qqq_return_col] < 0).sum() / len(comparison) * 100
+tqqq_loss_pct = (comparison[tqqq_return_col] < 0).sum() / len(comparison) * 100
+print(f"QQQ:  {qqq_loss_pct:.1f}% ({(comparison[qqq_return_col] < 0).sum()} out of {len(comparison)} scenarios)")
+print(f"TQQQ: {tqqq_loss_pct:.1f}% ({(comparison[tqqq_return_col] < 0).sum()} out of {len(comparison)} scenarios)")
 
 print("\n🎯 PROBABILITY OF BEATING QQQ:")
 print("-"*80)
@@ -205,24 +216,26 @@ print("="*80)
 
 print("\n❌ WORST 10 TQQQ SCENARIOS:")
 print("-"*80)
-worst = comparison.nsmallest(10, 'cagr_TQQQ')[
-    ['start_date', 'cagr_QQQ', 'cagr_TQQQ', 'final_value_TQQQ']
+worst = comparison.nsmallest(10, tqqq_return_col)[
+    ['start_date', qqq_return_col, tqqq_return_col, 'final_value_TQQQ']
 ].copy()
 worst['start_date'] = worst['start_date'].dt.strftime('%Y-%m-%d')
 worst['final_value_TQQQ'] = worst['final_value_TQQQ'].apply(lambda x: f"${x:,.0f}")
-worst['cagr_QQQ'] = worst['cagr_QQQ'].apply(lambda x: f"{x:.2f}%")
-worst['cagr_TQQQ'] = worst['cagr_TQQQ'].apply(lambda x: f"{x:.2f}%")
+worst[qqq_return_col] = worst[qqq_return_col].apply(lambda x: f"{x:.2f}%")
+worst[tqqq_return_col] = worst[tqqq_return_col].apply(lambda x: f"{x:.2f}%")
+worst.columns = ['Start Date', 'QQQ XIRR', 'TQQQ XIRR', 'TQQQ Final Value']
 print(worst.to_string(index=False))
 
 print("\n✅ BEST 10 TQQQ SCENARIOS:")
 print("-"*80)
-best = comparison.nlargest(10, 'cagr_TQQQ')[
-    ['start_date', 'cagr_QQQ', 'cagr_TQQQ', 'final_value_TQQQ']
+best = comparison.nlargest(10, tqqq_return_col)[
+    ['start_date', qqq_return_col, tqqq_return_col, 'final_value_TQQQ']
 ].copy()
 best['start_date'] = best['start_date'].dt.strftime('%Y-%m-%d')
 best['final_value_TQQQ'] = best['final_value_TQQQ'].apply(lambda x: f"${x:,.0f}")
-best['cagr_QQQ'] = best['cagr_QQQ'].apply(lambda x: f"{x:.2f}%")
-best['cagr_TQQQ'] = best['cagr_TQQQ'].apply(lambda x: f"{x:.2f}%")
+best[qqq_return_col] = best[qqq_return_col].apply(lambda x: f"{x:.2f}%")
+best[tqqq_return_col] = best[tqqq_return_col].apply(lambda x: f"{x:.2f}%")
+best.columns = ['Start Date', 'QQQ XIRR', 'TQQQ XIRR', 'TQQQ Final Value']
 print(best.to_string(index=False))
 
 # ============================================================================
@@ -232,10 +245,10 @@ print(best.to_string(index=False))
 # Create distribution chart
 fig, axes = plt.subplots(2, 2, figsize=(16, 12))
 
-# 1. CAGR Distribution - QQQ
+# 1. XIRR Distribution - QQQ
 ax1 = axes[0, 0]
 qqq_pct.plot(kind='bar', ax=ax1, color='steelblue', alpha=0.8, edgecolor='black')
-ax1.set_title('QQQ DCA: CAGR Distribution', fontsize=14, fontweight='bold')
+ax1.set_title('QQQ DCA: XIRR Distribution', fontsize=14, fontweight='bold')
 ax1.set_xlabel('Performance Level', fontsize=11, fontweight='bold')
 ax1.set_ylabel('Percentage of Scenarios (%)', fontsize=11, fontweight='bold')
 ax1.set_xticklabels(ax1.get_xticklabels(), rotation=45, ha='right')
@@ -244,10 +257,10 @@ for i, v in enumerate(qqq_pct.values):
     if v > 0:
         ax1.text(i, v + 1, f'{v:.1f}%', ha='center', fontsize=10, fontweight='bold')
 
-# 2. CAGR Distribution - TQQQ
+# 2. XIRR Distribution - TQQQ
 ax2 = axes[0, 1]
 tqqq_pct.plot(kind='bar', ax=ax2, color='darkorange', alpha=0.8, edgecolor='black')
-ax2.set_title('TQQQ DCA: CAGR Distribution', fontsize=14, fontweight='bold')
+ax2.set_title('TQQQ DCA: XIRR Distribution', fontsize=14, fontweight='bold')
 ax2.set_xlabel('Performance Level', fontsize=11, fontweight='bold')
 ax2.set_ylabel('Percentage of Scenarios (%)', fontsize=11, fontweight='bold')
 ax2.set_xticklabels(ax2.get_xticklabels(), rotation=45, ha='right')
@@ -264,7 +277,7 @@ bars1 = ax3.bar(x - width/2, qqq_pct.values, width, label='QQQ',
                color='steelblue', alpha=0.8, edgecolor='black')
 bars2 = ax3.bar(x + width/2, tqqq_pct.values, width, label='TQQQ', 
                color='darkorange', alpha=0.8, edgecolor='black')
-ax3.set_title('QQQ vs TQQQ: CAGR Distribution Comparison', fontsize=14, fontweight='bold')
+ax3.set_title('QQQ vs TQQQ: XIRR Distribution Comparison', fontsize=14, fontweight='bold')
 ax3.set_xlabel('Performance Level', fontsize=11, fontweight='bold')
 ax3.set_ylabel('Percentage of Scenarios (%)', fontsize=11, fontweight='bold')
 ax3.set_xticks(x)
@@ -280,17 +293,17 @@ ax4.axis('off')
 summary_data = [
     ['Metric', 'QQQ', 'TQQQ'],
     ['', '', ''],
-    ['Median CAGR', f"{comparison['cagr_QQQ'].median():.2f}%", f"{comparison['cagr_TQQQ'].median():.2f}%"],
-    ['Mean CAGR', f"{comparison['cagr_QQQ'].mean():.2f}%", f"{comparison['cagr_TQQQ'].mean():.2f}%"],
-    ['Best CAGR', f"{comparison['cagr_QQQ'].max():.2f}%", f"{comparison['cagr_TQQQ'].max():.2f}%"],
-    ['Worst CAGR', f"{comparison['cagr_QQQ'].min():.2f}%", f"{comparison['cagr_TQQQ'].min():.2f}%"],
-    ['Std Dev', f"{comparison['cagr_QQQ'].std():.2f}%", f"{comparison['cagr_TQQQ'].std():.2f}%"],
+    ['Median XIRR', f"{comparison[qqq_return_col].median():.2f}%", f"{comparison[tqqq_return_col].median():.2f}%"],
+    ['Mean XIRR', f"{comparison[qqq_return_col].mean():.2f}%", f"{comparison[tqqq_return_col].mean():.2f}%"],
+    ['Best XIRR', f"{comparison[qqq_return_col].max():.2f}%", f"{comparison[tqqq_return_col].max():.2f}%"],
+    ['Worst XIRR', f"{comparison[qqq_return_col].min():.2f}%", f"{comparison[tqqq_return_col].min():.2f}%"],
+    ['Std Dev', f"{comparison[qqq_return_col].std():.2f}%", f"{comparison[tqqq_return_col].std():.2f}%"],
     ['', '', ''],
     ['% Negative Returns', f"{qqq_loss_pct:.1f}%", f"{tqqq_loss_pct:.1f}%"],
-    ['% Returns > 10%', f"{(comparison['cagr_QQQ'] > 10).sum() / len(comparison) * 100:.1f}%", 
-     f"{(comparison['cagr_TQQQ'] > 10).sum() / len(comparison) * 100:.1f}%"],
-    ['% Returns > 20%', f"{(comparison['cagr_QQQ'] > 20).sum() / len(comparison) * 100:.1f}%",
-     f"{(comparison['cagr_TQQQ'] > 20).sum() / len(comparison) * 100:.1f}%"],
+    ['% Returns > 10%', f"{(comparison[qqq_return_col] > 10).sum() / len(comparison) * 100:.1f}%", 
+     f"{(comparison[tqqq_return_col] > 10).sum() / len(comparison) * 100:.1f}%"],
+    ['% Returns > 20%', f"{(comparison[qqq_return_col] > 20).sum() / len(comparison) * 100:.1f}%",
+     f"{(comparison[tqqq_return_col] > 20).sum() / len(comparison) * 100:.1f}%"],
     ['', '', ''],
     ['TQQQ Win Rate', '-', f"{tqqq_win_rate:.1f}%"],
 ]
